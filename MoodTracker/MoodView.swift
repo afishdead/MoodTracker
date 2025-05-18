@@ -13,6 +13,8 @@ struct MoodTimeEntry: Identifiable {
 
 struct MoodView: View {
     @Environment(\.managedObjectContext) private var viewContext
+    @Environment(\.colorScheme) var colorScheme
+
     @FetchRequest(
         sortDescriptors: [NSSortDescriptor(keyPath: \Mood.timestamp, ascending: false)],
         animation: .default)
@@ -21,13 +23,23 @@ struct MoodView: View {
     @State private var selectedMood: String? = nil
     @State private var comment: String = ""
     @FocusState private var commentFieldIsFocused: Bool
-
     @State private var selectedDate: Date? = nil
     @State private var isSheetPresented: Bool = false
+    @State private var currentMonth: Date = Calendar.current.startOfMonth(for: Date())
 
     let moodOptions = ["😄", "😊", "😐", "😟", "😭", "😠"]
     let moodScale: [String: Int] = ["😄": 6, "😊": 5, "😐": 4, "😟": 3, "😭": 2, "😠": 1]
     let reverseMoodScale: [Int: String] = [6: "😄", 5: "😊", 4: "😐", 3: "😟", 2: "😭", 1: "😠"]
+
+    var greetingMessage: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        switch hour {
+        case 5..<11: return "おはようございます ☀️"
+        case 11..<17: return "こんにちは 😊"
+        case 17..<22: return "こんばんは 🌙"
+        default: return "ゆっくり休んでください 😴"
+        }
+    }
 
     var body: some View {
         NavigationView {
@@ -38,19 +50,19 @@ struct MoodView: View {
                     moodChartSection()
                     Text(analysisMessage())
                         .font(.callout)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.subtextColor)
                     Text("本日記録数: \(todayCount()) 件")
                         .font(.caption)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.subtextColor)
                     Divider()
                     moodCalendarView()
                     Divider()
                     moodHistorySection()
                 }
                 .padding()
-                .background(Color(UIColor.systemBackground))
+                .background(Color.backgroundColor.ignoresSafeArea())
             }
-            .navigationTitle("気分メモ")
+            .navigationTitle(greetingMessage)
             .sheet(isPresented: $isSheetPresented) {
                 if let selected = selectedDate {
                     MoodDayDetailView(date: selected, moods: moods)
@@ -60,31 +72,37 @@ struct MoodView: View {
     }
 
     private func moodInputSection() -> some View {
-        VStack(alignment: .leading) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("今日の気分は？")
-                .font(.title2)
+                .font(.title3)
                 .fontWeight(.semibold)
-                .foregroundColor(Color.purple)
+                .foregroundColor(.primaryColor)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
+            GeometryReader { geometry in
+                let spacing: CGFloat = 8
+                let totalWidth = geometry.size.width
+                let itemWidth = (totalWidth - spacing * CGFloat(moodOptions.count - 1)) / CGFloat(moodOptions.count)
+
+                HStack(spacing: spacing) {
                     ForEach(moodOptions, id: \.self) { mood in
                         Text(mood)
-                            .font(.system(size: 30))
-                            .frame(width: 50, height: 50)
-                            .background(selectedMood == mood ? Color.purple.opacity(0.2) : Color.clear)
-                            .clipShape(Circle())
-                            .overlay(Circle().stroke(Color.purple, lineWidth: selectedMood == mood ? 2 : 0))
-                            .shadow(radius: 1)
+                            .font(.system(size: itemWidth * 0.5))
+                            .frame(width: itemWidth, height: itemWidth)
+                            .background(
+                                Circle()
+                                    .fill(selectedMood == mood ? Color.primaryColor.opacity(colorScheme == .dark ? 0.4 : 0.2) : .white)
+                                    .shadow(color: selectedMood == mood ? Color.primaryColor.opacity(0.3) : .clear, radius: 4)
+                            )
+                            .overlay(Circle().stroke(Color.primaryColor, lineWidth: selectedMood == mood ? 2 : 1))
                             .onTapGesture { selectedMood = mood }
                     }
                 }
-                .padding(.horizontal)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
+            .frame(height: 60)
 
             TextField("コメントを追加（任意）", text: $comment)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
-                .padding(.horizontal)
                 .focused($commentFieldIsFocused)
 
             Button(action: {
@@ -95,13 +113,19 @@ struct MoodView: View {
                     .fontWeight(.semibold)
                     .padding(.horizontal, 24)
                     .padding(.vertical, 10)
-                    .background(selectedMood == nil ? Color.gray.opacity(0.3) : Color.purple.opacity(0.8))
+                    .background(selectedMood == nil ? Color.gray.opacity(0.3) : Color.primaryColor)
                     .foregroundColor(.white)
                     .cornerRadius(12)
             }
+            .frame(maxWidth: .infinity, alignment: .center)
             .disabled(selectedMood == nil)
-            .padding(.top, 4)
         }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.cardBackground)
+                .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
+        )
     }
 
     private func timeSeriesData() -> [MoodTimeEntry] {
@@ -124,12 +148,12 @@ struct MoodView: View {
             return prevDay != currentDay ? current.timestamp : nil
         }
 
-        return VStack(alignment: .leading) {
-            Text("1日の気分変化")
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("最近の気分変化")
                 .font(.headline)
-                .foregroundColor(.purple)
+                .foregroundColor(.primaryColor)
 
-            ScrollView(.horizontal) {
+            ScrollView(.horizontal, showsIndicators: false) {
                 Chart {
                     ForEach(data) { item in
                         LineMark(
@@ -137,13 +161,14 @@ struct MoodView: View {
                             y: .value("気分スコア", item.score)
                         )
                         .interpolationMethod(.catmullRom)
-                        .foregroundStyle(Color.accentColor.opacity(0.7))
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+                        .foregroundStyle(Color.primaryColor.opacity(0.8))
 
                         PointMark(
                             x: .value("時間", item.timestamp),
                             y: .value("気分スコア", item.score)
                         )
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Color.primaryColor)
                         .annotation(position: .top) {
                             if !item.comment.isEmpty {
                                 Text(item.comment)
@@ -158,42 +183,53 @@ struct MoodView: View {
                         RuleMark(x: .value("Date Change", changeDate))
                             .lineStyle(StrokeStyle(lineWidth: 1, dash: [4]))
                             .foregroundStyle(.gray)
-                            .annotation(position: .top, alignment: .leading) {
+                            .annotation(position: .topLeading) {
                                 Text(changeDate.formatted(date: .abbreviated, time: .omitted))
                                     .font(.caption2)
                                     .foregroundColor(.gray)
                             }
                     }
                 }
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 6)) { value in
-                        AxisValueLabel(centered: true) {
-                            if let date = value.as(Date.self) {
-                                VStack {
-                                    Text(date.formatted(.dateTime.month().day()))
-                                    Text(date.formatted(.dateTime.hour().minute()))
-                                }
-                                .font(.caption2)
-                            }
-                        }
-                    }
-                }
-                .chartYScale(domain: 1...6)
+                .chartScrollableAxes(.horizontal) // 横スクロールだけにする
+                .chartXVisibleDomain(length: 12 * 60 * 60) // 例: 12時間分を初期表示
                 .chartYAxis {
                     AxisMarks(position: .leading, values: [1, 2, 3, 4, 5, 6]) { val in
                         if let intVal = val.as(Int.self), let emoji = reverseMoodScale[intVal] {
                             AxisGridLine()
                             AxisTick()
-                            AxisValueLabel { Text(emoji) }
+                            AxisValueLabel {
+                                Text(emoji).font(.caption)
+                            }
                         }
                     }
                 }
-                .frame(height: 260)
+                .chartYScale(domain: 0.5...6.5)
+                .chartXAxis {
+                    AxisMarks(values: .automatic(desiredCount: 4)) { value in
+                        AxisGridLine()
+                        AxisTick()
+                        AxisValueLabel() {
+                            if let dateValue = value.as(Date.self) {
+                                Text(dateValue.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption2)
+                            }
+                        }
+                    }
+                }
+
+                .frame(height: 280)
+                .padding(.top, 24)
                 .padding(.horizontal)
-                .padding(.top, 20)
                 .frame(minWidth: 600)
             }
+
         }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.cardBackground)
+                .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+        )
     }
 
     private func addMood() {
@@ -237,57 +273,100 @@ struct MoodView: View {
     private func colorForMoodScore(_ score: Double) -> Color {
         guard score > 0 else { return Color(UIColor.systemGray5) }
         let normalized = min(max(score - 1, 0), 5) / 5.0
-        return Color(hue: 0.33 * normalized, saturation: 0.6, brightness: 0.95)
+        return Color(hue: 0.33 * normalized, saturation: 0.6, brightness: 0.85)
     }
 
+
     private func moodCalendarView() -> some View {
-        VStack(alignment: .leading) {
+        let calendar = Calendar.current
+        let startOfMonth = calendar.startOfMonth(for: currentMonth)
+        let today = Date()
+
+        let range = calendar.range(of: .day, in: .month, for: currentMonth) ?? 1..<31
+        let firstWeekday = calendar.component(.weekday, from: startOfMonth)
+        let prefixEmptyDays = (firstWeekday + 6) % 7 // Adjust for Sunday = 1
+
+        let groupedByDay = Dictionary(grouping: moods) { mood in
+            calendar.startOfDay(for: mood.timestamp ?? Date())
+        }
+
+        let moodAverages: [Date: Double] = groupedByDay.reduce(into: [:]) { result, pair in
+            let (date, entries) = pair
+            if calendar.isDate(date, equalTo: currentMonth, toGranularity: .month) {
+                let scores = entries.compactMap { moodScale[$0.emoji ?? ""] }
+                guard !scores.isEmpty else { return }
+                let avg = Double(scores.reduce(0, +)) / Double(scores.count)
+                result[date] = avg
+            }
+        }
+
+        let weekDays = ["日", "月", "火", "水", "木", "金", "土"]
+
+        return VStack(alignment: .leading) {
+            HStack {
+                Button(action: {
+                    currentMonth = calendar.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
+                }) {
+                    Image(systemName: "chevron.left")
+                }
+
+                Spacer()
+
+                Text(currentMonth.formatted(.dateTime.year().month()))
+                    .font(.headline)
+
+                Spacer()
+
+                Button(action: {
+                    currentMonth = calendar.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
+                }) {
+                    Image(systemName: "chevron.right")
+                }
+            }
+            .padding(.bottom, 4)
+
             Text("今月の気分カレンダー")
                 .font(.headline)
                 .padding(.bottom, 4)
 
-            let calendar = Calendar.current
-            let today = Date()
-            let range = calendar.range(of: .day, in: .month, for: today) ?? (1..<31)
-            let components = calendar.dateComponents([.year, .month], from: today)
-            let startOfMonth = calendar.date(from: components) ?? Date()
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: 8) {
+                // 曜日ヘッダー
+                ForEach(weekDays, id: \.self) { day in
+                    Text(day)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity)
+                        .foregroundColor(.gray)
+                }
 
-            let groupedByDay = Dictionary(grouping: moods) { mood in
-                calendar.startOfDay(for: mood.timestamp ?? Date())
-            }
+                // 空白マス
+                ForEach(0..<prefixEmptyDays, id: \.self) { _ in
+                    Color.clear.frame(height: 40)
+                }
 
-            let moodAverages: [Int: Double] = groupedByDay.reduce(into: [:]) { result, pair in
-                let (date, entries) = pair
-                let scores = entries.compactMap { moodScale[$0.emoji ?? ""] }
-                guard !scores.isEmpty else { return }
-                let avg = Double(scores.reduce(0, +)) / Double(scores.count)
-                let day = calendar.component(.day, from: date)
-                result[day] = avg
-            }
-
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: 12) {
+                // 日にちのマス
                 ForEach(range, id: \.self) { day in
-                    let avg = moodAverages[day] ?? 0
-                    let color = colorForMoodScore(avg)
-                    VStack {
+                    if let cellDate = calendar.date(byAdding: .day, value: day - 1, to: startOfMonth) {
+                        let avg = moodAverages[cellDate] ?? 0
+                        let color = colorForMoodScore(avg)
+
                         Text("\(day)")
                             .font(.caption)
-                            .foregroundColor(.white)
-                    }
-                    .frame(minWidth: 36, minHeight: 40)
-                    .background(color)
-                    .cornerRadius(6)
-                    .onTapGesture {
-                        if let date = calendar.date(byAdding: .day, value: day - 1, to: startOfMonth) {
-                            selectedDate = date
-                            isSheetPresented = true
-                        }
+                            .frame(maxWidth: .infinity, minHeight: 40)
+                            .background(color)
+                            .cornerRadius(6)
+                            .onTapGesture {
+                                selectedDate = cellDate
+                                isSheetPresented = true
+                            }
                     }
                 }
             }
+            .padding(.horizontal)
         }
-        .padding(.horizontal)
     }
+
+
 
     private func moodHistorySection() -> some View {
         Text("最近の記録")
@@ -360,5 +439,51 @@ struct MoodDayDetailView: View {
             .navigationTitle(date.formatted(date: .abbreviated, time: .omitted))
             .navigationBarTitleDisplayMode(.inline)
         }
+    }
+}
+extension Calendar {
+    func startOfMonth(for date: Date) -> Date {
+        let components = dateComponents([.year, .month], from: date)
+        return self.date(from: components)!
+    }
+}
+
+extension Color {
+    static let primaryColor = Color(hex: "#A974FF")
+    static let accentColor = Color(hex: "#FFD6E8")
+
+    static var backgroundColor: Color {
+        Color(UIColor { tc in
+            tc.userInterfaceStyle == .dark ? UIColor.black : UIColor(red: 250/255, green: 249/255, blue: 251/255, alpha: 1)
+        })
+    }
+
+    static var cardBackground: Color {
+        Color(UIColor { tc in
+            tc.userInterfaceStyle == .dark ? UIColor(red: 28/255, green: 28/255, blue: 30/255, alpha: 1) : .white
+        })
+    }
+
+    static var textColor: Color {
+        Color(UIColor { tc in
+            tc.userInterfaceStyle == .dark ? .white : .black
+        })
+    }
+
+    static var subtextColor: Color {
+        Color(UIColor { tc in
+            tc.userInterfaceStyle == .dark ? UIColor.lightGray : UIColor.gray
+        })
+    }
+
+    init(hex: String) {
+        let scanner = Scanner(string: hex)
+        _ = scanner.scanString("#")
+        var rgb: UInt64 = 0
+        scanner.scanHexInt64(&rgb)
+        let r = Double((rgb >> 16) & 0xFF) / 255
+        let g = Double((rgb >> 8) & 0xFF) / 255
+        let b = Double(rgb & 0xFF) / 255
+        self.init(red: r, green: g, blue: b)
     }
 }
