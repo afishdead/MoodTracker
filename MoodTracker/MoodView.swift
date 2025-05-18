@@ -74,6 +74,7 @@ struct MoodView: View {
     @State private var timeEntries: [MoodTimeEntry] = []
     @State private var todayMoodCount: Int = 0
     @State private var dailyAverages: [Date: Double] = [:]
+    @State private var scrollTarget: UUID? = nil
 
     let moodOptions = ["😄", "😊", "😐", "😟", "😭", "😠"]
     let moodScale: [String: Int] = ["😄": 6, "😊": 5, "😐": 4, "😟": 3, "😭": 2, "😠": 1]
@@ -125,93 +126,91 @@ struct MoodView: View {
     }
     
     private func moodChartSection() -> some View {
-        let calendar = Calendar.current
         let data = timeEntries
-        let dayChanges = zip(data, data.dropFirst()).compactMap { prev, current in
-            let prevDay = calendar.startOfDay(for: prev.timestamp)
-            let currentDay = calendar.startOfDay(for: current.timestamp)
-            return prevDay != currentDay ? current.timestamp : nil
-        }
+        let chartHeight: CGFloat = 280
 
         return VStack(alignment: .leading, spacing: 12) {
             Text("最近の気分変化")
                 .font(.headline)
                 .foregroundColor(.primaryColor)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                Chart {
-                    ForEach(data) { item in
-                        LineMark(
-                            x: .value("時間", item.timestamp),
-                            y: .value("気分スコア", item.score)
-                        )
-                        .interpolationMethod(.catmullRom)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                        .foregroundStyle(Color.primaryColor.opacity(0.8))
+            ScrollViewReader { proxy in
+                HStack(alignment: .top, spacing: 0) {
+                    // 🎯 絵文字Y軸（固定）
+                    VStack(spacing: 0) {
+                        ForEach((1...6).reversed(), id: \.self) { score in
+                            Text(reverseMoodScale[score] ?? "")
+                                .font(.caption)
+                                .frame(height: (chartHeight - 20) / 6)
+                        }
+                    }
+                    .offset(y: -10)
+                    .frame(width: 32, height: chartHeight)
 
-                        PointMark(
-                            x: .value("時間", item.timestamp),
-                            y: .value("気分スコア", item.score)
-                        )
-                        .foregroundStyle(Color.primaryColor)
-                        .annotation(position: .top) {
-                            if !item.comment.isEmpty {
-                                Text(item.comment)
-                                    .font(.caption2)
-                                    .foregroundColor(.gray)
-                                    .lineLimit(1)
-                            }
-                        }
-                    }
+                    // 🎯 Chart部分（横スクロール）
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        Chart(data) { item in
+                            LineMark(
+                                x: .value("時間", item.timestamp),
+                                y: .value("気分スコア", item.score)
+                            )
+                            .interpolationMethod(.catmullRom)
+                            .lineStyle(StrokeStyle(lineWidth: 2))
+                            .foregroundStyle(Color.primaryColor.opacity(0.8))
 
-                    ForEach(dayChanges, id: \.self) { changeDate in
-                        RuleMark(x: .value("Date Change", changeDate))
-                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [4]))
-                            .foregroundStyle(.gray)
-                            .annotation(position: .topLeading) {
-                                Text(changeDate.formatted(date: .abbreviated, time: .omitted))
-                                    .font(.caption2)
-                                    .foregroundColor(.gray)
-                            }
-                    }
-                }
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 4)) { value in
-                        AxisGridLine()
-                        AxisTick()
-                        AxisValueLabel {
-                            if let dateValue = value.as(Date.self) {
-                                Text(dateValue.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.caption2)
+                            PointMark(
+                                x: .value("時間", item.timestamp),
+                                y: .value("気分スコア", item.score)
+                            )
+                            .foregroundStyle(Color.primaryColor)
+                            .annotation(position: .top) {
+                                if !item.comment.isEmpty {
+                                    Text(item.comment)
+                                        .font(.caption2)
+                                        .foregroundColor(.gray)
+                                        .lineLimit(1)
+                                }
                             }
                         }
-                    }
-                }
-                .chartYScale(domain: 0.5...6.5)
-                .chartYAxis {
-                    AxisMarks(position: .leading, values: [1, 2, 3, 4, 5, 6]) { val in
-                        if let intVal = val.as(Int.self), let emoji = reverseMoodScale[intVal] {
-                            AxisGridLine()
-                            AxisTick()
-                            AxisValueLabel {
-                                Text(emoji).font(.caption)
+                        .chartYScale(domain: 0.5...6.5)
+                        .chartXAxis {
+                            AxisMarks(values: .automatic(desiredCount: 4)) { value in
+                                AxisGridLine()
+                                AxisTick()
+                                AxisValueLabel {
+                                    if let date = value.as(Date.self) {
+                                        Text(date.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.caption2)
+                                    }
+                                }
                             }
                         }
+                        .frame(height: chartHeight)
+                        .padding(.horizontal)
+                        .frame(minWidth: 600)
+                        .id("chartEnd") // ✅ スクロール対象のID
                     }
                 }
-                .frame(height: 280)
-                .padding(.top, 24)
-                .padding(.horizontal)
-                .frame(minWidth: 600)
+                .frame(height: chartHeight)
+                .onAppear {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        proxy.scrollTo("chartEnd", anchor: .trailing)
+                    }
+                }
             }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.cardBackground)
+                    .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+            )
         }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.cardBackground)
-                .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
-        )
     }
+
+
+
+
+
 
     private func moodCalendarView() -> some View {
         let calendar = Calendar.current
@@ -289,7 +288,7 @@ struct MoodView: View {
             .foregroundColor(.purple)
 
         return LazyVStack(alignment: .leading, spacing: 12) {
-            ForEach(moods.suffix(50)) { mood in
+            ForEach(moods.suffix(50).reversed()) { mood in
                 HStack(alignment: .top, spacing: 12) {
                     Text(mood.emoji ?? "")
                         .font(.system(size: 24))
@@ -345,6 +344,7 @@ struct MoodView: View {
             guard !scores.isEmpty else { return }
             result[pair.key] = Double(scores.reduce(0, +)) / Double(scores.count)
         }
+        scrollTarget = timeEntries.last?.id
     }
 
     private func moodInputSection() -> some View {
@@ -457,23 +457,33 @@ struct MoodDayDetailView: View {
         }
 
         NavigationView {
-            List(filtered) { mood in
-                VStack(alignment: .leading) {
-                    HStack {
-                        Text(mood.emoji ?? "")
-                            .font(.title2)
-                        Text(mood.comment ?? "")
+            if filtered.isEmpty {
+                Text("この日に記録はありません。")
+                    .foregroundColor(.gray)
+                    .font(.callout)
+                    .padding()
+                    .navigationTitle(date.formatted(date: .abbreviated, time: .omitted))
+                    .navigationBarTitleDisplayMode(.inline)
+            } else {
+                List(filtered) { mood in
+                    VStack(alignment: .leading) {
+                        HStack {
+                            Text(mood.emoji ?? "")
+                                .font(.title2)
+                            Text(mood.comment ?? "")
+                        }
+                        if let ts = mood.timestamp {
+                            Text(ts.formatted(date: .omitted, time: .shortened))
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
                     }
-                    if let ts = mood.timestamp {
-                        Text(ts.formatted(date: .omitted, time: .shortened))
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
+                    .padding(.vertical, 4)
                 }
-                .padding(.vertical, 4)
+                .navigationTitle(date.formatted(date: .abbreviated, time: .omitted))
+                .navigationBarTitleDisplayMode(.inline)
             }
-            .navigationTitle(date.formatted(date: .abbreviated, time: .omitted))
-            .navigationBarTitleDisplayMode(.inline)
         }
+
     }
 }
