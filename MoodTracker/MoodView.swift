@@ -54,6 +54,45 @@ struct MoodTimeEntry: Identifiable {
     let comment: String
 }
 
+
+// MARK: - 補助型
+struct TrendPoint: Identifiable {
+    let id = UUID()
+    let date: Date
+    let score: Double
+}
+
+private func trendLine(for entries: [MoodTimeEntry]) -> [TrendPoint] {
+    guard entries.count >= 2 else { return [] }
+
+    let xValues = entries.map { $0.timestamp.timeIntervalSince1970 }
+    let yValues = entries.map { Double($0.score) }
+
+    let xMean = xValues.reduce(0, +) / Double(xValues.count)
+    let yMean = yValues.reduce(0, +) / Double(yValues.count)
+
+    let numerator = zip(xValues, yValues).reduce(0) { $0 + (($1.0 - xMean) * ($1.1 - yMean)) }
+    let denominator = xValues.reduce(0) { $0 + pow($1 - xMean, 2) }
+
+    guard denominator != 0 else { return [] }
+
+    let slope = numerator / denominator
+    let intercept = yMean - slope * xMean
+
+    guard let first = entries.first?.timestamp,
+          let last = entries.last?.timestamp else { return [] }
+
+    let y1 = slope * first.timeIntervalSince1970 + intercept
+    let y2 = slope * last.timeIntervalSince1970 + intercept
+
+    return [
+        TrendPoint(date: first, score: y1),
+        TrendPoint(date: last, score: y2)
+    ]
+}
+
+
+
 // MARK: - メインビュー
 struct MoodView: View {
     @Environment(\.managedObjectContext) private var viewContext
@@ -86,7 +125,7 @@ struct MoodView: View {
         case 5..<11: return "おはようございます ☀️"
         case 11..<17: return "こんにちは 😊"
         case 17..<22: return "こんばんは 🌙"
-        default: return "ゆっくり休んでください 😴"
+        default: return "おやすみなさい 😴"
         }
     }
 
@@ -127,6 +166,7 @@ struct MoodView: View {
     
     private func moodChartSection() -> some View {
         let data = timeEntries
+        let trendPoints = trendLine(for: data)
         let chartHeight: CGFloat = 280
 
         return VStack(alignment: .leading, spacing: 12) {
@@ -136,59 +176,17 @@ struct MoodView: View {
 
             ScrollViewReader { proxy in
                 HStack(alignment: .top, spacing: 0) {
-                    // 🎯 絵文字Y軸（固定）
-                    VStack(spacing: 0) {
-                        ForEach((1...6).reversed(), id: \.self) { score in
-                            Text(reverseMoodScale[score] ?? "")
-                                .font(.caption)
-                                .frame(height: (chartHeight - 20) / 6)
-                        }
-                    }
-                    .offset(y: -10)
-                    .frame(width: 32, height: chartHeight)
+                    emojiYAxis(height: chartHeight)
 
-                    // 🎯 Chart部分（横スクロール）
                     ScrollView(.horizontal, showsIndicators: false) {
-                        Chart(data) { item in
-                            LineMark(
-                                x: .value("時間", item.timestamp),
-                                y: .value("気分スコア", item.score)
-                            )
-                            .interpolationMethod(.catmullRom)
-                            .lineStyle(StrokeStyle(lineWidth: 2))
-                            .foregroundStyle(Color.primaryColor.opacity(0.8))
-
-                            PointMark(
-                                x: .value("時間", item.timestamp),
-                                y: .value("気分スコア", item.score)
-                            )
-                            .foregroundStyle(Color.primaryColor)
-                            .annotation(position: .top) {
-                                if !item.comment.isEmpty {
-                                    Text(item.comment)
-                                        .font(.caption2)
-                                        .foregroundColor(.gray)
-                                        .lineLimit(1)
-                                }
-                            }
-                        }
-                        .chartYScale(domain: 0.5...6.5)
-                        .chartXAxis {
-                            AxisMarks(values: .automatic(desiredCount: 4)) { value in
-                                AxisGridLine()
-                                AxisTick()
-                                AxisValueLabel {
-                                    if let date = value.as(Date.self) {
-                                        Text(date.formatted(date: .abbreviated, time: .shortened))
-                                            .font(.caption2)
-                                    }
-                                }
-                            }
+                        ZStack {
+                            moodLineChart(data: data)
+                            trendLineChart(points: trendPoints)
                         }
                         .frame(height: chartHeight)
                         .padding(.horizontal)
                         .frame(minWidth: 600)
-                        .id("chartEnd") // ✅ スクロール対象のID
+                        .id("chartEnd")
                     }
                 }
                 .frame(height: chartHeight)
@@ -206,11 +204,116 @@ struct MoodView: View {
             )
         }
     }
+    private func emojiYAxis(height: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            ForEach((1...6).reversed(), id: \.self) { score in
+                Text(reverseMoodScale[score] ?? "")
+                    .font(.caption)
+                    .frame(height: (height - 30) / 6)
+            }
+        }
+        .offset(y: -10)
+        .frame(width: 32, height: height)
+    }
+    private func moodLineChart(data: [MoodTimeEntry]) -> some View {
+        Chart {
+            ForEach(data) { item in
+                LineMark(
+                    x: .value("時間", item.timestamp),
+                    y: .value("気分スコア", item.score)
+                )
+                .interpolationMethod(.catmullRom)
+                .foregroundStyle(Color.primaryColor.opacity(0.8))
 
+                PointMark(
+                    x: .value("時間", item.timestamp),
+                    y: .value("気分スコア", item.score)
+                )
+                .foregroundStyle(Color.primaryColor)
+                .annotation(position: .top) {
+                    if !item.comment.isEmpty {
+                        Text(item.comment)
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(3)
+                            .frame(width: 80)
+                    }
+                }
+            }
+        }
+        .chartYScale(domain: 0.5...6.5)
+        .chartYAxis {
+            AxisMarks(position: .leading, values: [1, 2, 3, 4, 5, 6]) { val in
+                if let intVal = val.as(Int.self), let emoji = reverseMoodScale[intVal] {
+                    AxisGridLine()
+                    AxisTick()
+                    AxisValueLabel {
+                        Text("") // ❌ 数値表示なし（絵文字だけ手前に表示されているので）
+                    }
+                }
+            }
 
+        }
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: 6)) { value in
+                if let date = value.as(Date.self) {
+                    AxisGridLine()
+                    AxisTick()
+                    AxisValueLabel {
+                        VStack(spacing: 2) {
+                            Text(date.formatted(.dateTime.month(.abbreviated).day()))
+                            Text(date.formatted(.dateTime.hour().minute()))
+                        }
+                        .font(.system(size: 9))
+                        .multilineTextAlignment(.center)
+                    }
+                } else {
+                    AxisGridLine() // ← グリッドだけは出す（または省略可）
+                }
+            }
+        }
+    }
+    private func trendLineChart(points: [TrendPoint]) -> some View {
+        Chart {
+            if points.count == 2 {
+                LineMark(
+                    x: .value("時間", points[0].date),
+                    y: .value("傾向", points[0].score)
+                )
+                .interpolationMethod(.catmullRom)
+                //.interpolationMethod(.linear)
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 2]))
+                .foregroundStyle(.gray)
 
+                LineMark(
+                    x: .value("時間", points[1].date),
+                    y: .value("傾向", points[1].score)
+                )
+                .interpolationMethod(.linear)
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 2]))
+                .foregroundStyle(.gray)
+            }
+        }
+        .chartYScale(domain: 0.5...6.5)
+        .chartYAxis {
+            AxisMarks(position: .leading, values: [1, 2, 3, 4, 5, 6]) { val in
+                if let intVal = val.as(Int.self), let emoji = reverseMoodScale[intVal] {
+                    AxisGridLine().foregroundStyle(Color.clear)
+                    AxisTick()
+                    AxisValueLabel {
+                        Text("") // 数値表示なし（絵文字だけ手前に表示されているので）
+                    }
+                }
+            }
 
-
+        }
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: 6)) { value in
+                    AxisGridLine().foregroundStyle(Color.clear)  // ← グリッドだけは出す（または省略可）
+                }
+            }
+    }
 
     private func moodCalendarView() -> some View {
         let calendar = Calendar.current
@@ -283,42 +386,50 @@ struct MoodView: View {
     }
 
     private func moodHistorySection() -> some View {
-        Text("最近の記録")
-            .font(.headline)
-            .foregroundColor(.purple)
+        let filtered = moods
+            .filter { ($0.comment?.isEmpty == false) }
+            .sorted { ($0.timestamp ?? .distantPast) > ($1.timestamp ?? .distantPast) }
+            .prefix(50)
 
-        return LazyVStack(alignment: .leading, spacing: 12) {
-            ForEach(moods.suffix(50).reversed()) { mood in
-                HStack(alignment: .top, spacing: 12) {
-                    Text(mood.emoji ?? "")
-                        .font(.system(size: 24))
-                        .frame(width: 36, height: 36)
-                        .background(Color(UIColor.secondarySystemBackground))
-                        .clipShape(Circle())
-                        .shadow(radius: 1)
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("文字記録（最新50件）")
+                .font(.headline)
+                .foregroundColor(.purple)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        if let comment = mood.comment, !comment.isEmpty {
-                            Text(comment).font(.footnote)
+            LazyVStack(alignment: .leading, spacing: 12) {
+                ForEach(filtered, id: \.objectID) { mood in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(mood.emoji ?? "")
+                            .font(.system(size: 24))
+                            .frame(width: 36, height: 36)
+                            .background(Color(UIColor.secondarySystemBackground))
+                            .clipShape(Circle())
+                            .shadow(radius: 1)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(mood.comment ?? "")
+                                .font(.footnote)
+
+                            if let timestamp = mood.timestamp {
+                                Text(timestamp.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption2)
+                                    .foregroundColor(.gray)
+                            }
                         }
-                        if let timestamp = mood.timestamp {
-                            Text(timestamp.formatted(date: .abbreviated, time: .shortened))
-                                .font(.caption2)
-                                .foregroundColor(.gray)
-                        }
+                        Spacer()
                     }
-                    Spacer()
+                    .padding(.vertical, 6)
+                    .padding(.horizontal)
+                    .frame(maxWidth: .infinity)
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .cornerRadius(12)
+                    .shadow(color: .gray.opacity(0.05), radius: 1, x: 0, y: 1)
                 }
-                .padding(.vertical, 6)
-                .padding(.horizontal)
-                .frame(maxWidth: .infinity)
-                .background(Color(UIColor.secondarySystemBackground))
-                .cornerRadius(12)
-                .shadow(color: .gray.opacity(0.05), radius: 1, x: 0, y: 1)
             }
         }
         .padding(.horizontal)
     }
+
 
     private func updateCache() {
         let calendar = Calendar.current
