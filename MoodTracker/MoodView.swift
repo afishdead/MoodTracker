@@ -122,7 +122,8 @@ struct MoodView: View {
     var greetingMessage: String {
         let hour = Calendar.current.component(.hour, from: Date())
         switch hour {
-        case 5..<11: return "おはようございます ☀️"
+        case 5..<9: return "おはようございます ☀️"
+        case 9..<11: return "お疲れ様です ☕️"
         case 11..<17: return "こんにちは 😊"
         case 17..<22: return "こんばんは 🌙"
         default: return "おやすみなさい 😴"
@@ -162,6 +163,8 @@ struct MoodView: View {
                 }
             }
         }
+        .navigationViewStyle(.stack) // iPadでも iPhoneのように表示
+
     }
     
     private func moodChartSection() -> some View {
@@ -350,6 +353,7 @@ struct MoodView: View {
             Text("今月の気分カレンダー")
                 .font(.headline)
                 .padding(.bottom, 4)
+                .foregroundColor(.primaryColor)
 
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: 8) {
                 ForEach(weekDays, id: \.self) { day in
@@ -469,12 +473,15 @@ struct MoodView: View {
                 let spacing: CGFloat = 8
                 let totalWidth = geometry.size.width
                 let itemWidth = (totalWidth - spacing * CGFloat(moodOptions.count - 1)) / CGFloat(moodOptions.count)
+                let maxEmojiSize: CGFloat = 60 // ✅ 最大サイズを制限（iPhoneでも大丈夫）
+
+                let emojiSize = min(itemWidth, maxEmojiSize)
 
                 HStack(spacing: spacing) {
                     ForEach(moodOptions, id: \.self) { mood in
                         Text(mood)
-                            .font(.system(size: itemWidth * 0.5))
-                            .frame(width: itemWidth, height: itemWidth)
+                            .font(.system(size: emojiSize * 0.5))
+                            .frame(width: emojiSize, height: emojiSize)
                             .background(
                                 Circle()
                                     .fill(selectedMood == mood ? Color.primaryColor.opacity(colorScheme == .dark ? 0.4 : 0.2) : .white)
@@ -486,6 +493,8 @@ struct MoodView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
             }
+            .frame(height: 80) // ✅ 高さも余分に広がらないよう調整
+
             .frame(height: 60)
 
             TextField("コメントを追加（任意）", text: $comment)
@@ -596,5 +605,15 @@ struct MoodDayDetailView: View {
             }
         }
 
+    }
+}
+
+struct MoodView_Previews: PreviewProvider {
+    static var previews: some View {
+        Group {
+            MoodView()
+                .environment(\.managedObjectContext, PersistenceController.shared.container.viewContext)
+                .previewDevice("iPad Pro (13-inch)")
+        }
     }
 }
