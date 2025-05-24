@@ -2,6 +2,11 @@ import SwiftUI
 import CoreData
 import Charts
 
+
+extension Date: Identifiable {
+    public var id: Date { self }
+}
+
 // MARK: - Calendar 拡張（先頭に必要）
 extension Calendar {
     func startOfMonth(for date: Date) -> Date {
@@ -99,9 +104,12 @@ struct MoodView: View {
     @Environment(\.colorScheme) var colorScheme
 
     @FetchRequest(
-        sortDescriptors: [NSSortDescriptor(keyPath: \Mood.timestamp, ascending: true)],
-        animation: .default)
-    private var moods: FetchedResults<Mood>
+        sortDescriptors: [NSSortDescriptor(keyPath: \MoodNew.timestamp, ascending: true)],
+        predicate: NSPredicate(format: "timestamp != nil AND emoji != nil"),
+        animation: .default
+    )
+    private var moods: FetchedResults<MoodNew>
+
 
     @State private var selectedMood: String? = nil
     @State private var comment: String = ""
@@ -157,11 +165,10 @@ struct MoodView: View {
                 updateCache()
             }
 
-            .sheet(isPresented: $isSheetPresented) {
-                if let selected = selectedDate {
-                    MoodDayDetailView(date: selected, moods: moods)
-                }
+            .sheet(item: $selectedDate) { date in
+                MoodDayDetailView(date: date, moods: moods)
             }
+
         }
         .navigationViewStyle(.stack) // iPadでも iPhoneのように表示
 
@@ -186,7 +193,6 @@ struct MoodView: View {
                             moodLineChart(data: data)
                             trendLineChart(points: trendPoints)
                         }
-                        .frame(height: chartHeight)
                         .padding(.horizontal)
                         .frame(minWidth: 600)
                         .id("chartEnd")
@@ -245,6 +251,7 @@ struct MoodView: View {
                 }
             }
         }
+        .frame(minWidth: UIScreen.main.bounds.width - 100)
         .chartYScale(domain: 0.5...6.5)
         .chartYAxis {
             AxisMarks(position: .leading, values: [1, 2, 3, 4, 5, 6]) { val in
@@ -298,6 +305,7 @@ struct MoodView: View {
                 .foregroundStyle(.gray)
             }
         }
+        .frame(minWidth: UIScreen.main.bounds.width - 100)
         .chartYScale(domain: 0.5...6.5)
         .chartYAxis {
             AxisMarks(position: .leading, values: [1, 2, 3, 4, 5, 6]) { val in
@@ -380,7 +388,6 @@ struct MoodView: View {
                             .cornerRadius(6)
                             .onTapGesture {
                                 selectedDate = cellDate
-                                isSheetPresented = true
                             }
                     }
                 }
@@ -390,6 +397,7 @@ struct MoodView: View {
     }
 
     private func moodHistorySection() -> some View {
+
         let filtered = moods
             .filter { ($0.comment?.isEmpty == false) }
             .sorted { ($0.timestamp ?? .distantPast) > ($1.timestamp ?? .distantPast) }
@@ -474,8 +482,8 @@ struct MoodView: View {
                 let totalWidth = geometry.size.width
                 let itemWidth = (totalWidth - spacing * CGFloat(moodOptions.count - 1)) / CGFloat(moodOptions.count)
                 let maxEmojiSize: CGFloat = 60 // ✅ 最大サイズを制限（iPhoneでも大丈夫）
-
                 let emojiSize = min(itemWidth, maxEmojiSize)
+                let chartWidth = geometry.size.width - 60
 
                 HStack(spacing: spacing) {
                     ForEach(moodOptions, id: \.self) { mood in
@@ -547,7 +555,8 @@ struct MoodView: View {
 
     private func addMood() {
         withAnimation {
-            let newMood = Mood(context: viewContext)
+            
+            let newMood = MoodNew(context: viewContext)
             newMood.timestamp = Date()
             newMood.emoji = selectedMood
             newMood.comment = comment
@@ -565,7 +574,7 @@ struct MoodView: View {
 }
 struct MoodDayDetailView: View {
     let date: Date
-    let moods: FetchedResults<Mood>
+    let moods: FetchedResults<MoodNew>
 
     var body: some View {
         let calendar = Calendar.current
@@ -585,26 +594,63 @@ struct MoodDayDetailView: View {
                     .navigationTitle(date.formatted(date: .abbreviated, time: .omitted))
                     .navigationBarTitleDisplayMode(.inline)
             } else {
-                List(filtered) { mood in
-                    VStack(alignment: .leading) {
-                        HStack {
-                            Text(mood.emoji ?? "")
-                                .font(.title2)
-                            Text(mood.comment ?? "")
-                        }
-                        if let ts = mood.timestamp {
-                            Text(ts.formatted(date: .omitted, time: .shortened))
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
+                List {
+                    Section {
+                        MoodDaySummaryView(date: date, moods: filtered)
                     }
-                    .padding(.vertical, 4)
+
+                    ForEach(filtered, id: \.objectID) { mood in
+                        VStack(alignment: .leading) {
+                            HStack {
+                                Text(mood.emoji ?? "").font(.title2)
+                                Text(mood.comment ?? "")
+                            }
+                            if let ts = mood.timestamp {
+                                Text(ts.formatted(date: .omitted, time: .shortened))
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
                 }
                 .navigationTitle(date.formatted(date: .abbreviated, time: .omitted))
                 .navigationBarTitleDisplayMode(.inline)
             }
+
         }
 
+    }
+}
+struct MoodDaySummaryView: View {
+    let date: Date
+    let moods: [MoodNew]
+
+    var body: some View {
+        let moodScale: [String: Int] = ["😄": 6, "😊": 5, "😐": 4, "😟": 3, "😭": 2, "😠": 1]
+        let scores = moods.compactMap { moodScale[$0.emoji ?? ""] }
+        let count = scores.count
+        let avg = Double(scores.reduce(0, +)) / Double(max(count, 1))
+
+        let summary: String
+        if avg >= 5.0 {
+            summary = "とても良い気分の日でした！🌟"
+        } else if avg >= 3.5 {
+            summary = "安定した1日でした。無理せず、ゆっくり人生を楽しめましょう。"
+        } else {
+            summary = "少し気分が落ち込んでいたかもしれません。😢"
+        }
+
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("記録件数: \(count) 件")
+                .font(.subheadline)
+            Text(String(format: "平均スコア: %.1f / 6", avg))
+                .font(.subheadline)
+            Text("まとめ: \(summary)")
+                .font(.subheadline)
+                .foregroundColor(.primaryColor)
+        }
+        .padding(.vertical, 4)
     }
 }
 
@@ -617,3 +663,4 @@ struct MoodView_Previews: PreviewProvider {
         }
     }
 }
+
